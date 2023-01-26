@@ -4,6 +4,7 @@
 #include <vector>
 #include <unordered_map>
 #include <math.h>
+#include "math.h"
 
 // TODO: make a lot of seprate files
 struct Position
@@ -183,3 +184,12 @@ struct DmapWeights
 };
 
 struct Hive {};
+
+using TilePosition = IVec2;
+
+struct PathfindTarget {
+  TilePosition pos;
+};
+
+struct IsPathPoint {};
+struct PathPointsTo {};

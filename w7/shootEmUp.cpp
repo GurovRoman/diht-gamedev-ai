@@ -105,18 +105,18 @@ static void register_roguelike_systems(flecs::world &ecs)
             for (size_t idx : dp.tilePortalsIndices[y * wd + x])
             {
               const PathPortal &portal = dp.portals[idx];
-              Rectangle rect{portal.startX * tile_size, portal.startY * tile_size,
-                             (portal.endX - portal.startX + 1) * tile_size,
-                             (portal.endY - portal.startY + 1) * tile_size};
+              Rectangle rect{portal.start.x * tile_size, portal.start.y * tile_size,
+                             (portal.end.x - portal.start.x + 1) * tile_size,
+                             (portal.end.y - portal.start.y + 1) * tile_size};
               DrawRectangleLinesEx(rect, 3, BLACK);
             }
           }
         }
         for (const PathPortal &portal : dp.portals)
         {
-          Rectangle rect{portal.startX * tile_size, portal.startY * tile_size,
-                         (portal.endX - portal.startX + 1) * tile_size,
-                         (portal.endY - portal.startY + 1) * tile_size};
+          Rectangle rect{portal.start.x * tile_size, portal.start.y * tile_size,
+                         (portal.end.x - portal.start.x + 1) * tile_size,
+                         (portal.end.y - portal.start.y + 1) * tile_size};
           Vector2 fromCenter{rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f};
           DrawRectangleLinesEx(rect, 1, WHITE);
           if (mousePosition.x < rect.x || mousePosition.x > rect.x + rect.width ||
@@ -126,8 +126,8 @@ static void register_roguelike_systems(flecs::world &ecs)
           for (const PortalConnection &conn : portal.conns)
           {
             const PathPortal &endPortal = dp.portals[conn.connIdx];
-            Vector2 toCenter{(endPortal.startX + endPortal.endX + 1) * tile_size * 0.5f,
-                             (endPortal.startY + endPortal.endY + 1) * tile_size * 0.5f};
+            Vector2 toCenter{(endPortal.start.x + endPortal.end.x + 1) * tile_size * 0.5f,
+                             (endPortal.start.y + endPortal.end.y + 1) * tile_size * 0.5f};
             DrawLineEx(fromCenter, toCenter, 1.f, WHITE);
             DrawText(TextFormat("%d", int(conn.score)),
                      (fromCenter.x + toCenter.x) * 0.5f,
@@ -137,6 +137,24 @@ static void register_roguelike_systems(flecs::world &ecs)
         }
       });
     });
+
+  static auto tilePosToVector = [](const TilePosition &tilePos) {
+    return Vector2{
+        tilePos.x * tile_size + tile_size / 2,
+        tilePos.y * tile_size + tile_size / 2,
+    };
+  };
+
+  ecs.system<const TilePosition>()
+      .term<IsPathPoint>()
+      .term<PathPointsTo>(flecs::Wildcard)
+      .each([&](flecs::entity e, const TilePosition &from) {
+        const auto to = *e.target<PathPointsTo>().get<TilePosition>();
+        DrawLineEx(
+            tilePosToVector(from), tilePosToVector(to),
+            1.f, GetColor(0x00ff00ff));
+      });
+
   steer::register_systems(ecs);
 }
 
@@ -187,5 +205,34 @@ void init_dungeon(flecs::world &ecs, char *tiles, size_t w, size_t h)
 
 void process_game(flecs::world &ecs)
 {
+  static auto cameraQuery = ecs.query<Camera2D>();
+  static auto playerQuery = ecs.query_builder()
+      .term<const IsPlayer>()
+      .build();
+
+  static auto pathfindQuery = ecs.query<const Position, const PathfindTarget>();
+
+  static auto posToTilePos = [](const auto& pos, float offset = 0) {
+    return TilePosition{static_cast<int>((pos.x + offset) / tile_size),
+                        static_cast<int>((pos.y + offset) / tile_size)};
+  };
+
+  if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+    cameraQuery.each([&](Camera2D &cam) {
+      Vector2 mousePosition = GetScreenToWorld2D(GetMousePosition(), cam);
+      ecs.defer([&] {
+        playerQuery.each([&](flecs::entity e) {
+          e.set(PathfindTarget{posToTilePos(mousePosition)});
+        });
+      });
+    });
+  }
+
+  if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsKeyPressed(KEY_SPACE)) {
+    reset_path_visualizations(ecs);
+    pathfindQuery.each([&](flecs::entity e, const Position& pos, const PathfindTarget& target) {
+      find_and_visualize_path(ecs, posToTilePos(pos, tile_size / 2), target.pos);
+    });
+  }
 }
 
