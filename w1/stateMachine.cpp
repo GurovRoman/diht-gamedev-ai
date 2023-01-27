@@ -42,3 +42,19 @@ void StateMachine::addTransition(StateTransition *trans, int from, int to)
   transitions[from].push_back(std::make_pair(trans, to));
 }
 
+StateMachine::StateMachine(bool resetting_on_start) : resetting_on_start(resetting_on_start) { }
+
+void StateMachine::enter()
+{
+  if (resetting_on_start) {
+    curStateIdx = 0;
+    states[curStateIdx]->enter();
+  }
+}
+
+void StateMachine::exit()
+{
+  if (resetting_on_start) {
+    states[curStateIdx]->exit();
+  }
+}

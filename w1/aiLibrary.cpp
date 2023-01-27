@@ -1,47 +1,17 @@
+#include "common.h"
 #include "aiLibrary.h"
 #include <flecs.h>
-#include "ecsTypes.h"
 #include <bx/rng.h>
-#include <cfloat>
-#include <cmath>
 
 static bx::RngShr3 rng;
 
 class AttackEnemyState : public State
 {
 public:
-  void enter() const override {}
-  void exit() const override {}
-  void act(float/* dt*/, flecs::world &/*ecs*/, flecs::entity /*entity*/) const override {}
+  void enter() override {}
+  void exit() override {}
+  void act(float/* dt*/, flecs::world &/*ecs*/, flecs::entity /*entity*/) override {}
 };
-
-template<typename T>
-T sqr(T a){ return a*a; }
-
-template<typename T, typename U>
-static float dist_sq(const T &lhs, const U &rhs) { return float(sqr(lhs.x - rhs.x) + sqr(lhs.y - rhs.y)); }
-
-template<typename T, typename U>
-static float dist(const T &lhs, const U &rhs) { return sqrtf(dist_sq(lhs, rhs)); }
-
-template<typename T, typename U>
-static int move_towards(const T &from, const U &to)
-{
-  int deltaX = to.x - from.x;
-  int deltaY = to.y - from.y;
-  if (abs(deltaX) > abs(deltaY))
-    return deltaX > 0 ? EA_MOVE_RIGHT : EA_MOVE_LEFT;
-  return deltaY > 0 ? EA_MOVE_UP : EA_MOVE_DOWN;
-}
-
-static int inverse_move(int move)
-{
-  return move == EA_MOVE_LEFT ? EA_MOVE_RIGHT :
-         move == EA_MOVE_RIGHT ? EA_MOVE_LEFT :
-         move == EA_MOVE_UP ? EA_MOVE_DOWN :
-         move == EA_MOVE_DOWN ? EA_MOVE_UP : move;
-}
-
 
 template<typename Callable>
 static void on_closest_enemy_pos(flecs::world &ecs, flecs::entity entity, Callable c)
@@ -72,9 +42,9 @@ static void on_closest_enemy_pos(flecs::world &ecs, flecs::entity entity, Callab
 class MoveToEnemyState : public State
 {
 public:
-  void enter() const override {}
-  void exit() const override {}
-  void act(float/* dt*/, flecs::world &ecs, flecs::entity entity) const override
+  void enter() override {}
+  void exit() override {}
+  void act(float/* dt*/, flecs::world &ecs, flecs::entity entity) override
   {
     on_closest_enemy_pos(ecs, entity, [&](Action &a, const Position &pos, const Position &enemy_pos)
     {
@@ -87,9 +57,9 @@ class FleeFromEnemyState : public State
 {
 public:
   FleeFromEnemyState() {}
-  void enter() const override {}
-  void exit() const override {}
-  void act(float/* dt*/, flecs::world &ecs, flecs::entity entity) const override
+  void enter() override {}
+  void exit() override {}
+  void act(float/* dt*/, flecs::world &ecs, flecs::entity entity) override
   {
     on_closest_enemy_pos(ecs, entity, [&](Action &a, const Position &pos, const Position &enemy_pos)
     {
@@ -103,9 +73,9 @@ class PatrolState : public State
   float patrolDist;
 public:
   PatrolState(float dist) : patrolDist(dist) {}
-  void enter() const override {}
-  void exit() const override {}
-  void act(float/* dt*/, flecs::world &ecs, flecs::entity entity) const override
+  void enter() override {}
+  void exit() override {}
+  void act(float/* dt*/, flecs::world &ecs, flecs::entity entity) override
   {
     entity.set([&](const Position &pos, const PatrolPos &ppos, Action &a)
     {
@@ -120,12 +90,37 @@ public:
   }
 };
 
+class PatrolPlayerState : public State
+{
+  float patrolDist;
+public:
+  explicit PatrolPlayerState(float dist) : patrolDist(dist) {}
+  void enter() override {}
+  void exit() override {}
+  void act(float dt, flecs::world &ecs, flecs::entity entity) override
+  {
+    static auto playerQuery = ecs.query_builder<const Position>().term<IsPlayer>().build();
+
+    entity.set([&](const Position &pos, Action &a) {
+      playerQuery.each([&](const Position& ppos) {
+        if (dist(pos, ppos) > patrolDist)
+          a.action = move_towards(pos, ppos); // do a recovery walk
+        else
+        {
+          // do a random walk
+          a.action = EA_MOVE_START + (rng.gen() % (EA_MOVE_END - EA_MOVE_START));
+        }
+      });
+    });
+  }
+};
+
 class NopState : public State
 {
 public:
-  void enter() const override {}
-  void exit() const override {}
-  void act(float/* dt*/, flecs::world &ecs, flecs::entity entity) const override {}
+  void enter() override {}
+  void exit() override {}
+  void act(float/* dt*/, flecs::world &ecs, flecs::entity entity) override {}
 };
 
 class EnemyAvailableTransition : public StateTransition
@@ -163,6 +158,21 @@ public:
     {
       hitpointsThresholdReached |= hp.hitpoints < threshold;
     });
+    return hitpointsThresholdReached;
+  }
+};
+
+class PlayerHitpointsLessThanTransition : public StateTransition
+{
+  float threshold;
+public:
+  PlayerHitpointsLessThanTransition(float in_thres) : threshold(in_thres) {}
+  bool isAvailable(flecs::world &ecs, flecs::entity entity) const override
+  {
+    static auto playerQuery = ecs.query_builder<const Hitpoints>().term<IsPlayer>().build();
+
+    bool hitpointsThresholdReached = false;
+    playerQuery.each([&](const Hitpoints& hp) { hitpointsThresholdReached |= hp.hitpoints < threshold; });
     return hitpointsThresholdReached;
   }
 };
@@ -207,6 +217,17 @@ public:
   }
 };
 
+class ChanceTransition : public StateTransition
+{
+  const float chance;
+public:
+  explicit ChanceTransition(float chance) : chance(chance) {}
+
+  bool isAvailable(flecs::world &ecs, flecs::entity entity) const override
+  {
+    return bx::frnd(&rng) <= chance;
+  }
+};
 
 // states
 State *create_attack_enemy_state()
@@ -229,10 +250,20 @@ State *create_patrol_state(float patrol_dist)
   return new PatrolState(patrol_dist);
 }
 
+State* create_patrol_player_state(float patrol_dist)
+{
+  return new PatrolPlayerState(patrol_dist);
+}
+
 State *create_nop_state()
 {
   return new NopState();
 }
+
+StateMachine* create_sub_sm_state(bool resetting_on_start) {
+  return new StateMachine(resetting_on_start);
+}
+
 
 // transitions
 StateTransition *create_enemy_available_transition(float dist)
@@ -250,6 +281,11 @@ StateTransition *create_hitpoints_less_than_transition(float thres)
   return new HitpointsLessThanTransition(thres);
 }
 
+StateTransition *create_player_hitpoints_less_than_transition(float thres)
+{
+  return new PlayerHitpointsLessThanTransition(thres);
+}
+
 StateTransition *create_negate_transition(StateTransition *in)
 {
   return new NegateTransition(in);
@@ -259,3 +295,6 @@ StateTransition *create_and_transition(StateTransition *lhs, StateTransition *rh
   return new AndTransition(lhs, rhs);
 }
 
+StateTransition* create_chance_transition(float chance) {
+  return new ChanceTransition(chance);
+}

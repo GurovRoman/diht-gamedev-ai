@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 struct Position;
 struct MovePos;
 
@@ -114,3 +116,41 @@ struct Team
   int team = 0;
 };
 
+enum class ResourceType {
+  Hunger,
+  Money,
+  Wood,
+  WoodenPhallus,
+};
+
+template<ResourceType type>
+struct Resource {
+  uint32_t amount;
+};
+
+enum class BuildingType {
+  Market,
+  Workshop,
+  Khimki,
+  Tavern,
+  Bed,
+};
+
+template<BuildingType type>
+struct Building {};
+
+static Color buildingTypeToColor(BuildingType type)
+{
+  switch (type) {
+    case BuildingType::Market:
+      return {0xff0099ff};
+    case BuildingType::Workshop:
+      return {0xff0077cc};
+    case BuildingType::Khimki:
+      return {0xff005599};
+    case BuildingType::Tavern:
+      return {0xff003377};
+    case BuildingType::Bed:
+      return {0xff001155};
+  }
+}
