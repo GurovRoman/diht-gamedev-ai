@@ -5,6 +5,27 @@
 #include "raylib.h"
 #include "blackboard.h"
 
+template <class Tag>
+static flecs::entity findClosest(flecs::world& ecs, Position pos, const flecs::entity& to_ignore = {}) {
+  static auto candidatesQuery = ecs.query_builder<const Position>().term<Tag>().build();
+
+  flecs::entity closest;
+  float closestDist = FLT_MAX;
+  Position closestPos;
+  candidatesQuery.each([&](flecs::entity candidate, const Position& epos) {
+    if (candidate == to_ignore)
+      return;
+    float curDist = dist(epos, pos);
+    if (curDist < closestDist) {
+      closestDist = curDist;
+      closestPos = epos;
+      closest = candidate;
+    }
+  });
+
+  return closest;
+}
+
 struct CompoundNode : public BehNode
 {
   std::vector<BehNode*> nodes;
@@ -48,6 +69,48 @@ struct Selector : public CompoundNode
         return res;
     }
     return BEH_FAIL;
+  }
+};
+
+struct Or : public CompoundNode
+{
+  BehResult update(flecs::world &ecs, flecs::entity entity, Blackboard &bb) override
+  {
+    for (BehNode *node : nodes)
+    {
+      BehResult res = node->update(ecs, entity, bb);
+      if (res == BEH_SUCCESS)
+        return res;
+    }
+    return BEH_FAIL;
+  }
+};
+
+struct Parallel : public CompoundNode
+{
+  BehResult update(flecs::world &ecs, flecs::entity entity, Blackboard &bb) override
+  {
+    for (BehNode *node : nodes)
+    {
+      BehResult res = node->update(ecs, entity, bb);
+      if (res != BEH_RUNNING)
+        return res;
+    }
+    return BEH_RUNNING;
+  }
+};
+
+struct Not : public BehNode
+{
+  BehNode* child;
+
+  explicit Not(BehNode* child) : child(child) {}
+  ~Not() { delete child; }
+
+  BehResult update(flecs::world& ecs, flecs::entity entity, Blackboard& bb) override
+  {
+    BehResult res = child->update(ecs, entity, bb);
+    return res == BEH_SUCCESS ? BEH_FAIL : BEH_SUCCESS;
   }
 };
 
@@ -197,6 +260,57 @@ struct Patrol : public BehNode
   }
 };
 
+template<class Tag>
+struct FindClosest : public BehNode
+{
+  size_t entityBb = size_t(-1);
+  FindClosest(flecs::entity entity, const char *bb_name)
+  {
+    entityBb = reg_entity_blackboard_var<flecs::entity>(entity, bb_name);
+  }
+  BehResult update(flecs::world &ecs, flecs::entity entity, Blackboard &bb) override
+  {
+    if (ecs.is_valid(bb.get<flecs::entity>(entityBb))) {
+      return BEH_SUCCESS;
+    }
+
+    BehResult res = BEH_FAIL;
+    entity.set([&](const Position& pos) {
+      flecs::entity closest = findClosest<Tag>(ecs, pos, entity);
+      if (ecs.is_valid(closest)) {
+        bb.set<flecs::entity>(entityBb, closest);
+        res = BEH_SUCCESS;
+      }
+    });
+    return res;
+  }
+};
+
+struct NextWaypoint : public BehNode
+{
+  size_t entityBb = size_t(-1);
+  NextWaypoint(flecs::entity entity, const char *bb_name)
+  {
+    entityBb = reg_entity_blackboard_var<flecs::entity>(entity, bb_name);
+  }
+  BehResult update(flecs::world &ecs, flecs::entity entity, Blackboard &bb) override
+  {
+    auto cur_waypoint = bb.get<flecs::entity>(entityBb);
+    if (!ecs.is_valid(cur_waypoint))
+      return BEH_FAIL;
+
+    auto res = BEH_FAIL;
+
+    cur_waypoint.get([&](const Waypoint& wp) {
+      if (ecs.is_valid(wp.next)) {
+        bb.set(entityBb, wp.next);
+        res = BEH_SUCCESS;
+      }
+    });
+
+    return res;
+  }
+};
 
 BehNode *sequence(const std::vector<BehNode*> &nodes)
 {
@@ -212,6 +326,27 @@ BehNode *selector(const std::vector<BehNode*> &nodes)
   for (BehNode *node : nodes)
     sel->pushNode(node);
   return sel;
+}
+
+BehNode *or_(const std::vector<BehNode*> &nodes)
+{
+  Or *_or = new Or;
+  for (BehNode *node : nodes)
+    _or->pushNode(node);
+  return _or;
+}
+
+BehNode *parallel(const std::vector<BehNode*> &nodes)
+{
+  Parallel *par = new Parallel;
+  for (BehNode *node : nodes)
+    par->pushNode(node);
+  return par;
+}
+
+BehNode *not_(BehNode* node)
+{
+  return new Not(node);
 }
 
 BehNode *move_to_entity(flecs::entity entity, const char *bb_name)
@@ -239,3 +374,17 @@ BehNode *patrol(flecs::entity entity, float patrol_dist, const char *bb_name)
   return new Patrol(entity, patrol_dist, bb_name);
 }
 
+template <class Tag>
+BehNode *find_closest(flecs::entity entity, const char *bb_name)
+{
+  return new FindClosest<Tag>(entity, bb_name);
+}
+
+BehNode *next_waypoint(flecs::entity entity, const char *bb_name) {
+  return new NextWaypoint(entity, bb_name);
+}
+
+
+template BehNode *find_closest<Waypoint>(flecs::entity entity, const char *bb_name);
+template BehNode *find_closest<HealAmount>(flecs::entity entity, const char *bb_name);
+template BehNode *find_closest<PowerupAmount>(flecs::entity entity, const char *bb_name);

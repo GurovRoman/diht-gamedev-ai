@@ -112,3 +112,8 @@ struct Team
 
 struct TextureSource {};
 
+struct CanUsePickups {};
+
+struct Waypoint {
+  flecs::entity next {};
+};

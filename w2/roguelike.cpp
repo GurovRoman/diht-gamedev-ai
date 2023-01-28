@@ -6,21 +6,45 @@
 #include "blackboard.h"
 
 
+static void create_collector_beh(flecs::entity e)
+{
+  e.add<CanUsePickups>()
+    .set(Blackboard{});
+  BehNode *root =
+    selector({
+      sequence({
+        find_enemy(e, 2.f, "attack_target"),
+        move_to_entity(e, "attack_target")
+      }),
+      sequence({
+        or_({
+          find_closest<HealAmount>(e, "pickup"),
+          find_closest<PowerupAmount>(e, "pickup")}),
+        move_to_entity(e, "pickup")
+      }),
+      sequence({
+        find_enemy(e, 1000.f, "attack_target"),
+        move_to_entity(e, "attack_target")
+      })
+    });
+  e.set(BehaviourTree{root});
+}
+
+
 static void create_minotaur_beh(flecs::entity e)
 {
   e.set(Blackboard{});
   BehNode *root =
     selector({
       sequence({
-        is_low_hp(50.f),
-        find_enemy(e, 4.f, "flee_enemy"),
-        flee(e, "flee_enemy")
+        find_enemy(e, 4.f, "attack_target"),
+        move_to_entity(e, "attack_target"),
       }),
       sequence({
-        find_enemy(e, 3.f, "attack_enemy"),
-        move_to_entity(e, "attack_enemy")
-      }),
-      patrol(e, 2.f, "patrol_pos")
+        find_closest<Waypoint>(e, "waypoint"),
+        move_to_entity(e, "waypoint"),
+        next_waypoint(e, "waypoint"),
+      })
     });
   e.set(BehaviourTree{root});
 }
@@ -54,6 +78,7 @@ static void create_player(flecs::world &ecs, int x, int y, const char *texture_s
     .add<IsPlayer>()
     .set(Team{0})
     .set(PlayerInput{})
+    .add<CanUsePickups>()
     .set(NumActions{2, 0})
     .set(Color{255, 255, 255, 255})
     .add<TextureSource>(textureSrc)
@@ -117,6 +142,24 @@ static void register_roguelike_systems(flecs::world &ecs)
 }
 
 
+std::vector<flecs::entity> create_waypoint_sequence(flecs::world& ecs, const std::vector<Position>& seq) {
+  const flecs::entity textureSrc = ecs.entity("waypoint_tex");
+
+  std::vector<flecs::entity> res;
+  res.reserve(seq.size());
+
+  for (const auto& pos : seq) {
+    res.push_back(ecs.entity().set(Position{pos}).add<TextureSource>(textureSrc).set(Color{255, 255, 255, 255}));
+  }
+
+  for (size_t i = 0; i < res.size(); ++i) {
+    res[i].set(Waypoint{res[(i + 1) % res.size()]});
+  }
+
+  return res;
+}
+
+
 void init_roguelike(flecs::world &ecs)
 {
   register_roguelike_systems(ecs);
@@ -125,6 +168,8 @@ void init_roguelike(flecs::world &ecs)
     .set(Texture2D{LoadTexture("assets/swordsman.png")});
   ecs.entity("minotaur_tex")
     .set(Texture2D{LoadTexture("assets/minotaur.png")});
+  ecs.entity("waypoint_tex")
+    .set(Texture2D{LoadTexture("assets/waypoint.png")});
 
   ecs.observer<Texture2D>()
     .event(flecs::OnRemove)
@@ -133,10 +178,14 @@ void init_roguelike(flecs::world &ecs)
         UnloadTexture(texture);
       });
 
+  auto waypoint = create_waypoint_sequence(ecs, {{-10, -5}, {-8, 5}, {0, 7}, {8, 5}, {10, -5}, {0, -10}});
+
   create_minotaur_beh(create_monster(ecs, 5, 5, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"));
   create_minotaur_beh(create_monster(ecs, 10, -5, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"));
   create_minotaur_beh(create_monster(ecs, -5, -5, Color{0x11, 0x11, 0x11, 0xff}, "minotaur_tex"));
   create_minotaur_beh(create_monster(ecs, -5, 5, Color{0, 255, 0, 255}, "minotaur_tex"));
+
+  create_collector_beh(create_monster(ecs, -10, -10, Color{255, 255, 255, 255}, "minotaur_tex"));
 
   create_player(ecs, 0, 0, "swordsman_tex");
 
@@ -227,12 +276,12 @@ static void process_actions(flecs::world &ecs)
     });
   });
 
-  static auto playerPickup = ecs.query<const IsPlayer, const Position, Hitpoints, MeleeDamage>();
+  static auto npcPickuper = ecs.query<const CanUsePickups, const Position, Hitpoints, MeleeDamage>();
   static auto healPickup = ecs.query<const Position, const HealAmount>();
   static auto powerupPickup = ecs.query<const Position, const PowerupAmount>();
   ecs.defer([&]
   {
-    playerPickup.each([&](const IsPlayer&, const Position &pos, Hitpoints &hp, MeleeDamage &dmg)
+    npcPickuper.each([&](const CanUsePickups&, const Position &pos, Hitpoints &hp, MeleeDamage &dmg)
     {
       healPickup.each([&](flecs::entity entity, const Position &ppos, const HealAmount &amt)
       {

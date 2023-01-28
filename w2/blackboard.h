@@ -9,8 +9,8 @@
 template<typename DataType>
 class NamedDataPool
 {
-public:
-  size_t regName(const std::string &name)
+protected:
+  size_t regName_(const std::string &name)
   {
     const auto itf = nameIndices.find(name);
     if (itf != nameIndices.end())
@@ -22,12 +22,12 @@ public:
     return idx;
   }
 
-  void set(size_t idx, const DataType &in_data)
+  void set_(size_t idx, const DataType &in_data)
   {
     data[idx] = in_data;
   }
 
-  DataType get(size_t idx) const
+  DataType get_(size_t idx) const
   {
     return data[idx];
   }
@@ -45,19 +45,19 @@ public:
   template<typename DataType>
   size_t regName(const std::string &name)
   {
-    return NamedDataPool<DataType>::regName(name);
+    return NamedDataPool<DataType>::regName_(name);
   }
 
   template<typename DataType>
   void set(size_t idx, const DataType &in_data)
   {
-    NamedDataPool<DataType>::set(idx, in_data);
+    NamedDataPool<DataType>::set_(idx, in_data);
   }
 
   template<typename DataType>
   DataType get(size_t idx) const
   {
-    return NamedDataPool<DataType>::get(idx);
+    return NamedDataPool<DataType>::get_(idx);
   }
 };
 
